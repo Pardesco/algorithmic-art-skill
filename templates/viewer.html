@@ -1,0 +1,360 @@
+<!doctype html>
+<!--
+  ALGORITHMIC ART VIEWER — engine + one replaceable ART object.
+
+  WHAT TO REPLACE PER PIECE:  the ART object only (title, size, params, render).
+  WHAT TO KEEP:               everything below the ART object (the ENGINE), and the CSS/HTML chrome.
+
+  Zero dependencies, no CDNs — works offline, as a local file, and under strict CSP.
+
+  ART CONTRACT
+    title       string
+    size        logical canvas size in px (square; keep even for video)
+    animated    true -> render(ctx,p,rng,noise,t) called each frame with loop phase t in [0,1)
+    progressive true -> piece accumulates state: define setup(p,rng,noise)->state and
+                 step(ctx,p,state,frame,rng,noise) instead of render(). Frames step sequentially.
+    duration    seconds per loop (animated only)
+    params      { name: {value,min,max,step,label?} | {type:'colors',value:[...]}
+                  | {type:'select',value,options} | {type:'bool',value} }
+                'seed' is required and handled by the Seed UI.
+                For static pieces every change re-renders. For progressive pieces add regen:true
+                to params that must restart the sim; others apply live.
+    render(ctx, p, rng, noise, t)   stateless full render. MUST derive all randomness from
+                 rng/noise (seeded). Never Math.random(), never the clock.
+                 The engine pre-scales the context so vector drawing (paths, fills, strokes) in
+                 logical ART.size units exports at any resolution for free. ImageData work
+                 (getImageData/putImageData) BYPASSES canvas transforms — pixel-based pieces must
+                 reset the transform and work in device pixels (see the demo's first lines).
+
+  ENGINE PROVIDES
+    rng()            seeded uniform [0,1)      rng.range(a,b)  rng.int(a,b)  rng.pick(arr)  rng.gauss()
+    noise(x,y)       seeded value noise [0,1]  noise.fbm(x,y,oct=4,lac=2,gain=.5)
+    Seed nav, auto-generated param UI, Regenerate/Reset, hi-res PNG export (re-render, not upscale),
+    and window.__art frame-capture hooks for scripts/capture_frames.mjs.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Algorithmic Art</title>
+<style>
+  :root { --bg:#0f0f13; --panel:#16161d; --line:#26262f; --text:#e8e8ec; --dim:#8b8b98; --accent:#d97757; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display:flex; min-height:100vh; }
+  aside { width:280px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--line);
+          padding:20px 18px; overflow-y:auto; height:100vh; position:sticky; top:0; }
+  aside h1 { font-size:16px; font-weight:600; letter-spacing:.02em; margin-bottom:2px; }
+  aside .sub { color:var(--dim); font-size:12px; margin-bottom:20px; }
+  .sec { margin-bottom:22px; }
+  .sec h2 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.1em;
+            color:var(--dim); margin-bottom:10px; }
+  .row { margin-bottom:12px; }
+  .row label { display:flex; justify-content:space-between; font-size:12px; color:var(--text); margin-bottom:4px; }
+  .row label span { color:var(--dim); font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  .seedbar { display:flex; gap:6px; }
+  .seedbar input { flex:1; min-width:0; background:var(--bg); border:1px solid var(--line); color:var(--text);
+                   border-radius:6px; padding:6px 8px; font:13px ui-monospace, monospace; text-align:center; }
+  button { background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px;
+           padding:6px 10px; font:inherit; font-size:12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.primary:hover { filter:brightness(1.1); color:#fff; }
+  .btns { display:flex; flex-wrap:wrap; gap:6px; }
+  .btns button { flex:1 1 45%; }
+  .colors { display:flex; gap:6px; flex-wrap:wrap; }
+  .colors input[type=color] { width:34px; height:28px; border:1px solid var(--line); border-radius:6px;
+                              background:none; padding:2px; cursor:pointer; }
+  select { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text);
+           border-radius:6px; padding:6px 8px; font:inherit; font-size:12px; }
+  main { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; }
+  canvas { max-width:min(92vh, 100%); max-height:92vh; border-radius:4px;
+           box-shadow:0 8px 40px rgba(0,0,0,.5); }
+  .hint { color:var(--dim); font-size:11px; margin-top:6px; }
+</style>
+</head>
+<body>
+<aside>
+  <h1 id="title"></h1>
+  <div class="sub" id="subtitle"></div>
+  <div class="sec"><h2>Seed</h2>
+    <div class="seedbar">
+      <button id="seed-prev" title="previous seed">−</button>
+      <input id="seed-input" inputmode="numeric">
+      <button id="seed-next" title="next seed">+</button>
+      <button id="seed-rand" title="random seed">⚄</button>
+    </div>
+    <div class="hint">←/→ seed · R random · E export</div>
+  </div>
+  <div class="sec"><h2>Parameters</h2><div id="params"></div></div>
+  <div class="sec"><h2>Actions</h2>
+    <div class="btns">
+      <button id="regen">Regenerate</button>
+      <button id="reset">Reset</button>
+      <button id="export1" class="primary">PNG 1×</button>
+      <button id="export4" class="primary">PNG 4×</button>
+    </div>
+  </div>
+</aside>
+<main><canvas id="art"></canvas></main>
+
+<script>
+"use strict";
+/* ════════════════════════ ART (replace this object per piece) ════════════════════════ */
+const ART = {
+  title: "Fold Basin",
+  subtitle: "Clifford attractor · velocity-shaded",
+  size: 1080,
+  animated: false,
+  progressive: false,
+  duration: 8,
+  params: {
+    seed:    { value: 7,      min: 1,    max: 99999, step: 1 },
+    points:  { value: 700000, min: 50000, max: 2000000, step: 10000, label: "Points" },
+    fold:    { value: 0.55,   min: 0,    max: 1,     step: 0.01, label: "Fold" },
+    exposure:{ value: 0.75,   min: 0.1,  max: 1.5,   step: 0.01, label: "Exposure" },
+    palette: { type: "colors", value: ["#0a0a12", "#3fe0d0", "#ff2e88"], label: "Ground / Slow / Fast" },
+  },
+  render(ctx, p, rng, noise, t) {
+    // This piece plots via ImageData, which ignores ctx transforms — so work in device
+    // pixels: reset the transform and derive everything from the real canvas size.
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const S = ctx.canvas.width, pxScale = S / ART.size, TAU = Math.PI * 2;
+    const nPoints = Math.round(p.points * pxScale * pxScale); // keep density constant across export scales
+    ctx.fillStyle = p.palette[0];
+    ctx.fillRect(0, 0, S, S);
+    // Draw attractor coefficients from the seed, rejecting degenerate orbits (deterministic:
+    // retries consume the same rng sequence for a given seed). 't' morphs a/b to close the loop.
+    const measure = (a, b, c, d) => {
+      let tx = 0.1, ty = 0.1, minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+      for (let i = 0; i < 20000; i++) {
+        const nx = Math.sin(a * ty) + c * Math.cos(a * tx),
+              ny = Math.sin(b * tx) + d * Math.cos(b * ty);
+        tx = nx; ty = ny;
+        if (i > 100) { if (tx < minX) minX = tx; if (tx > maxX) maxX = tx;
+                       if (ty < minY) minY = ty; if (ty > maxY) maxY = ty; }
+      }
+      return [minX, maxX, minY, maxY];
+    };
+    let a, b, c, d;
+    for (let tries = 0; tries < 24; tries++) { // rejection is t-independent: no popping across frames
+      a = rng.range(-2, 2); b = rng.range(-2, 2);
+      c = rng.range(0.5, 1.8) * (0.6 + 0.8 * p.fold); d = rng.range(0.5, 1.8);
+      const [x0, x1, y0, y1] = measure(a, b, c, d);
+      if (x1 - x0 > 1.6 && y1 - y0 > 1.6) break; // spread orbit found
+    }
+    a += 0.15 * Math.sin(TAU * t); b += 0.15 * Math.cos(TAU * t);
+    const [minX, maxX, minY, maxY] = measure(a, b, c, d); // fit the orbit actually rendered
+    const slow = hexRgb(p.palette[1]), fast = hexRgb(p.palette[2]);
+    const img = ctx.getImageData(0, 0, S, S), px = img.data;
+    let x = rng.range(-0.5, 0.5), y = rng.range(-0.5, 0.5);
+    // Fit the measured orbit into the frame with a margin.
+    const scale = 0.84 * S / Math.max(maxX - minX, maxY - minY),
+          cx = S / 2 - scale * (minX + maxX) / 2, cy = S / 2 - scale * (minY + maxY) / 2,
+          alpha = 34 * p.exposure;
+    for (let i = 0; i < nPoints; i++) {
+      const nx = Math.sin(a * y) + c * Math.cos(a * x),
+            ny = Math.sin(b * x) + d * Math.cos(b * y);
+      const v = Math.min(1, Math.hypot(nx - x, ny - y) * 0.35);
+      x = nx; y = ny;
+      const sx = (cx + x * scale) | 0, sy = (cy + y * scale) | 0;
+
+      if (sx < 0 || sy < 0 || sx >= S || sy >= S) continue;
+      const k = (sy * S + sx) * 4;
+      px[k]   = Math.min(255, px[k]   + alpha * (slow[0] + (fast[0] - slow[0]) * v) / 255 * 2);
+      px[k+1] = Math.min(255, px[k+1] + alpha * (slow[1] + (fast[1] - slow[1]) * v) / 255 * 2);
+      px[k+2] = Math.min(255, px[k+2] + alpha * (slow[2] + (fast[2] - slow[2]) * v) / 255 * 2);
+    }
+    ctx.putImageData(img, 0, 0);
+    ctx.restore();
+    function hexRgb(h) { return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); }
+  },
+};
+/* ══════════════════════════════ ENGINE (keep as-is) ══════════════════════════════ */
+(() => {
+  // --- seeded PRNG (mulberry32) + helpers ---
+  function makeRng(seed) {
+    let s = (seed >>> 0) || 1;
+    const f = () => { s |= 0; s = s + 0x6D2B79F5 | 0;
+      let z = Math.imul(s ^ s >>> 15, 1 | s);
+      z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z;
+      return ((z ^ z >>> 14) >>> 0) / 4294967296; };
+    f.range = (a, b) => a + (b - a) * f();
+    f.int = (a, b) => Math.floor(f.range(a, b + 1));
+    f.pick = arr => arr[Math.floor(f() * arr.length)];
+    f.gauss = () => { const u = 1 - f(), v = f();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+    return f;
+  }
+  // --- seeded 2D value noise + fbm ---
+  function makeNoise(seed) {
+    const h = (ix, iy) => { let n = ix * 374761393 + iy * 668265263 + (seed | 0) * 1013904223;
+      n = (n ^ n >>> 13) * 1274126177; return ((n ^ n >>> 16) >>> 0) / 4294967296; };
+    const sm = t => t * t * t * (t * (t * 6 - 15) + 10);
+    const n2 = (x, y) => { const ix = Math.floor(x), iy = Math.floor(y),
+        fx = x - ix, fy = y - iy, u = sm(fx), v = sm(fy);
+      const a = h(ix, iy), b = h(ix + 1, iy), c = h(ix, iy + 1), d = h(ix + 1, iy + 1);
+      return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+    n2.fbm = (x, y, oct = 4, lac = 2, gain = 0.5) => { let s = 0, amp = 0.5, f = 1;
+      for (let i = 0; i < oct; i++) { s += amp * n2(x * f, y * f); f *= lac; amp *= gain; }
+      return s; };
+    return n2;
+  }
+  // --- state ---
+  const defaults = JSON.parse(JSON.stringify(ART.params));
+  const p = {}; for (const k in ART.params) p[k] = structuredClone(ART.params[k].value);
+  const canvas = document.getElementById("art"), ctx = canvas.getContext("2d");
+  canvas.width = canvas.height = ART.size;
+  let frame = 0, simState = null, simRng = null, simNoise = null, raf = null;
+
+  function fullRender(target, scale, t) {
+    const c = target.getContext("2d");
+    c.save(); c.scale(scale, scale);
+    ART.render(c, p, makeRng(p.seed), makeNoise(p.seed), t || 0);
+    c.restore();
+  }
+  function resetSim() {
+    frame = 0; simRng = makeRng(p.seed); simNoise = makeNoise(p.seed);
+    simState = ART.setup ? ART.setup(p, simRng, simNoise) : null;
+    ctx.clearRect(0, 0, ART.size, ART.size);
+  }
+  function tick() {
+    if (ART.progressive) { ART.step(ctx, p, simState, frame, simRng, simNoise); frame++; }
+    else { const total = Math.max(1, Math.round((ART.duration || 8) * 60));
+      fullRender(canvas, 1, (frame % total) / total); frame++; }
+    raf = requestAnimationFrame(tick);
+  }
+  function regenerate() {
+    if (raf) cancelAnimationFrame(raf); raf = null;
+    if (ART.progressive) { resetSim(); raf = requestAnimationFrame(tick); }
+    else if (ART.animated) { frame = 0; raf = requestAnimationFrame(tick); }
+    else fullRender(canvas, 1, 0);
+  }
+  // --- export: deterministic re-render at scale ---
+  function exportPNG(scale) {
+    const out = document.createElement("canvas");
+    out.width = out.height = ART.size * scale;
+    if (ART.progressive) { // re-run the sim from scratch at scale
+      const c = out.getContext("2d"); c.scale(scale, scale);
+      const rng = makeRng(p.seed), noise = makeNoise(p.seed);
+      const st = ART.setup ? ART.setup(p, rng, noise) : null;
+      for (let i = 0; i < Math.max(frame, 1); i++) ART.step(c, p, st, i, rng, noise);
+    } else {
+      const total = Math.max(1, Math.round((ART.duration || 8) * 60));
+      fullRender(out, scale, ART.animated ? (frame % total) / total : 0);
+    }
+    const a = document.createElement("a");
+    a.download = `${ART.title.toLowerCase().replace(/\W+/g, "-")}-seed${p.seed}-${scale}x.png`;
+    a.href = out.toDataURL("image/png"); a.click();
+  }
+  // --- auto UI ---
+  const paramsEl = document.getElementById("params");
+  const displays = {};
+  function buildUI() {
+    document.getElementById("title").textContent = ART.title;
+    document.getElementById("subtitle").textContent = ART.subtitle || "";
+    document.title = ART.title;
+    paramsEl.innerHTML = "";
+    for (const [k, spec] of Object.entries(ART.params)) {
+      if (k === "seed") continue;
+      const row = document.createElement("div"); row.className = "row";
+      if (spec.type === "colors") {
+        row.innerHTML = `<label>${spec.label || k}</label>`;
+        const wrap = document.createElement("div"); wrap.className = "colors";
+        p[k].forEach((col, i) => {
+          const inp = document.createElement("input"); inp.type = "color"; inp.value = col;
+          inp.oninput = () => { p[k][i] = inp.value; onChange(spec); };
+          wrap.appendChild(inp);
+        });
+        row.appendChild(wrap);
+      } else if (spec.type === "select") {
+        row.innerHTML = `<label>${spec.label || k}</label>`;
+        const sel = document.createElement("select");
+        spec.options.forEach(o => { const op = document.createElement("option");
+          op.value = op.textContent = o; op.selected = o === p[k]; sel.appendChild(op); });
+        sel.onchange = () => { p[k] = sel.value; onChange(spec); };
+        row.appendChild(sel);
+      } else if (spec.type === "bool") {
+        const id = "b_" + k;
+        row.innerHTML = `<label for="${id}">${spec.label || k}</label>`;
+        const inp = document.createElement("input"); inp.type = "checkbox"; inp.id = id; inp.checked = p[k];
+        inp.onchange = () => { p[k] = inp.checked; onChange(spec); };
+        row.appendChild(inp);
+      } else {
+        row.innerHTML = `<label>${spec.label || k}<span></span></label>`;
+        displays[k] = row.querySelector("span");
+        displays[k].textContent = p[k];
+        const inp = document.createElement("input"); inp.type = "range";
+        inp.min = spec.min; inp.max = spec.max; inp.step = spec.step; inp.value = p[k];
+        inp.oninput = () => { p[k] = parseFloat(inp.value);
+          displays[k].textContent = p[k]; onChange(spec); };
+        row.appendChild(inp);
+      }
+      paramsEl.appendChild(row);
+    }
+    seedInput.value = p.seed;
+  }
+  function onChange(spec) {
+    if (ART.progressive) { if (spec.regen) regenerate(); }
+    else if (!ART.animated) regenerate();
+  }
+  // --- seed nav ---
+  const seedInput = document.getElementById("seed-input");
+  function setSeed(s) {
+    p.seed = Math.max(1, Math.round(s) || 1);
+    seedInput.value = p.seed; regenerate();
+  }
+  document.getElementById("seed-prev").onclick = () => setSeed(p.seed - 1);
+  document.getElementById("seed-next").onclick = () => setSeed(p.seed + 1);
+  document.getElementById("seed-rand").onclick = () => setSeed(1 + Math.floor(Math.random() * 99999));
+  seedInput.onchange = () => setSeed(parseFloat(seedInput.value));
+  document.getElementById("regen").onclick = regenerate;
+  document.getElementById("reset").onclick = () => {
+    for (const k in defaults) p[k] = structuredClone(defaults[k].value);
+    buildUI(); regenerate();
+  };
+  document.getElementById("export1").onclick = () => exportPNG(1);
+  document.getElementById("export4").onclick = () => exportPNG(4);
+  addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === "ArrowLeft") setSeed(p.seed - 1);
+    if (e.key === "ArrowRight") setSeed(p.seed + 1);
+    if (e.key === "r" || e.key === "R") setSeed(1 + Math.floor(Math.random() * 99999));
+    if (e.key === "e" || e.key === "E") exportPNG(1);
+  });
+  // --- capture hooks (see scripts/capture_frames.mjs) ---
+  let capN = -1, capState = null, capRng = null, capNoise = null, capCanvas = null;
+  window.__art = {
+    meta: { title: ART.title, size: ART.size, animated: !!ART.animated,
+            progressive: !!ART.progressive, duration: ART.duration || 8 },
+    setSeed: s => { p.seed = Math.max(1, Math.round(s) || 1); seedInput.value = p.seed; capN = -1; },
+    setParams: obj => { Object.assign(p, obj); capN = -1; },
+    renderFrame: (n, total, scale = 1) => {
+      if (!capCanvas || capCanvas.width !== ART.size * scale) {
+        capCanvas = document.createElement("canvas");
+        capCanvas.width = capCanvas.height = ART.size * scale;
+      }
+      const c = capCanvas.getContext("2d");
+      if (ART.progressive) {
+        if (n !== capN + 1) { // (re)start the sim
+          capRng = makeRng(p.seed); capNoise = makeNoise(p.seed);
+          capState = ART.setup ? ART.setup(p, capRng, capNoise) : null;
+          c.setTransform(scale, 0, 0, scale, 0, 0);
+          c.clearRect(0, 0, ART.size, ART.size);
+          for (let i = 0; i < n; i++) ART.step(c, p, capState, i, capRng, capNoise);
+        }
+        ART.step(c, p, capState, n, capRng, capNoise); capN = n;
+      } else {
+        c.setTransform(scale, 0, 0, scale, 0, 0);
+        ART.render(c, p, makeRng(p.seed), makeNoise(p.seed), total ? n / total : 0);
+      }
+      return capCanvas.toDataURL("image/png");
+    },
+  };
+  // --- boot ---
+  buildUI(); regenerate();
+})();
+</script>
+</body>
+</html>
