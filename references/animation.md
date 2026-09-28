@@ -15,9 +15,10 @@ The template exposes a capture contract:
 
 ```js
 window.__art = {
-  meta,                          // {title, size, animated, progressive, duration}
+  meta,                          // {title, width, height, animated, progressive, steps, duration, vector, mm}
   setSeed(s), setParams(obj),
-  renderFrame(n, total, scale)   // deterministic; returns dataURL PNG
+  renderFrame(n, total, scale),  // deterministic; returns dataURL PNG
+  still(seed, scale), contactSheet(seeds, cell), svg()
 }
 ```
 
@@ -27,7 +28,7 @@ window.__art = {
 node scripts/capture_frames.mjs piece.html out_frames --frames 360 --seed 42 --scale 2
 ```
 
-Progressive sims are stepped sequentially (frame n renders sim state after n steps); stateless pieces render any frame independently. Requires `npm i playwright` (chromium). No Playwright? Fallbacks: a loop over the browser-tools screenshot, or an in-page recorder via `canvas.captureStream()` + `MediaRecorder` (webm, less controlled).
+Stateless pieces render frame n at phase `n/frames` — so `--frames` = duration × fps closes the loop exactly. Progressive sims are stepped sequentially (frame n = state after n+1 steps). Requires Playwright once (`npm i` in the skill folder; the system Chrome/Edge is used if no bundled browser). The live preview advances by real time, so it plays at the right speed on 60Hz and 120Hz displays alike; capture is always frame-exact. No Playwright? Fallbacks: a loop over the browser-tools screenshot, or an in-page recorder via `canvas.captureStream()` + `MediaRecorder` (webm, less controlled).
 
 ## ffmpeg recipes
 
@@ -37,7 +38,7 @@ ffmpeg -framerate 60 -i out_frames/%05d.png -c:v libx264 -preset slow -crf 16 -p
 ```
 `-pix_fmt yuv420p` is mandatory for compatibility; even dimensions required (keep canvas sizes even).
 
-**Vertical reel** (1080×1920 from a square master — pad, don't crop, unless composition allows):
+**Vertical reel**: best is to compose natively — set `width: 1080, height: 1080*16/9 = 1920` in the ART object and design for the tall frame. Padding a square master is the fallback (pad, don't crop, unless composition allows):
 ```
 ffmpeg -i master.mp4 -vf "scale=1080:1080,pad=1080:1920:0:420:color=#0a0a12" -c:v libx264 -crf 18 -pix_fmt yuv420p -movflags +faststart reel.mp4
 ```

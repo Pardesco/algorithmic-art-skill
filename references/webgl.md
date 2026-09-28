@@ -25,6 +25,26 @@ float hash(vec2 p, float seed){
 
 - **Animation**: uniform `u_t` = loop phase in [0,1), fed by the engine — never `performance.now()` inside the shader path (breaks loops and capture).
 
+## Plugging into the skill's tooling
+
+WebGL pieces don't use the 2D template, but they should expose the same automation contract so `render_stills.mjs` and `capture_frames.mjs` work unchanged:
+
+```js
+window.__art = {
+  meta: { title, width, height, animated: true, duration },
+  setSeed(s) { seed = s; }, setParams(o) { Object.assign(params, o); },
+  renderFrame(n, total, scale = 1) {       // deterministic: phase from n, never the clock
+    renderer.setPixelRatio(scale); renderer.setSize(width, height, false);
+    draw(total ? n / total : 0);            // set u_seed / u_t / param uniforms, render once
+    return renderer.domElement.toDataURL("image/png");
+  },
+  still(seed, scale = 1) { this.setSeed(seed); return this.renderFrame(0, 1, scale); },
+  contactSheet(seeds, cell = 360) { /* draw still(s) for each seed into a 2D canvas grid; return its dataURL */ },
+};
+```
+
+Also honor `#seed=` in the URL hash so a link reproduces the image.
+
 ## Patterns
 
 **Full-screen shader quad** (no lib): one `<canvas>`, compile vert (pass-through) + frag, draw a single triangle strip; all art in the fragment shader from `uv`, `u_seed`, `u_t`, param uniforms. The highest power-to-weight setup in generative art.

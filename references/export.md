@@ -22,6 +22,8 @@ Re-run the full pipeline on a scaled canvas (the template's export button does t
 
 Vector output is a *generation mode*, not a conversion: the algorithm should emit paths, not pixels. Design line-art pieces as path lists from the start (single-line strokes, no fills), then serialize.
 
+**Built into the template:** define `ART.paths(p, rng, noise, t, env)` returning `[{pts:[[x,y],...], kind:'cut'|'engrave'|..., closed?}]` in logical canvas units and set `ART.mm = [w, h]`. The engine previews the paths (`ART.paper`, `ART.ink`, `ART.lineWidth`), shows an **SVG** export button, groups paths into one `<g id=kind>` layer per kind with laser colours, orders them greedily to cut pen-up travel, and reports `penUpBeforeMM/penUpAfterMM`. Headless: `render_stills.mjs piece.html out --seeds 3 --svg`. The rules below still apply — dedupe, simplify, and join inside `paths()`.
+
 **Document setup — real units:**
 
 ```xml
@@ -45,7 +47,7 @@ Vector output is a *generation mode*, not a conversion: the algorithm should emi
 - **Simplify**: Ramer–Douglas–Peucker at ~0.05–0.1mm tolerance; thousands of micro-segments make machines vibrate and files bloat.
 - Respect a **margin** (≥5mm) and note the machine bed limit in the piece's params (e.g., max 300×300mm).
 
-**Serializer sketch:**
+**Standalone serializer** (for pieces built outside the template):
 
 ```js
 function toSVG(paths, wMM, hMM){ // paths: [{pts:[[x,y]...], kind:'cut'|'engrave'}]

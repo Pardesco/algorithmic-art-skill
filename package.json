@@ -1,0 +1,14 @@
+{
+  "name": "algorithmic-art-skill",
+  "private": true,
+  "type": "module",
+  "description": "Optional tooling for the algorithmic-art skill. `npm i` here once to enable scripts/*.mjs.",
+  "license": "MIT",
+  "scripts": {
+    "stills": "node scripts/render_stills.mjs",
+    "frames": "node scripts/capture_frames.mjs"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

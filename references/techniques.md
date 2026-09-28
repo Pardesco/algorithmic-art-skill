@@ -5,6 +5,7 @@ Purpose: breadth, not a menu. Untrained reflexes collapse to five tropes (Perlin
 Each entry: what it is → one implementation hint.
 
 ## Fields & flows
+- **Evenly-spaced streamlines (Jobard–Lefer)** — seed streamlines of any field, terminate each when it comes within `d_sep` of an existing line (spatial hash), spawn new seeds at `d_sep` offsets along finished lines. Turns a flow field into engraving-quality line art; vary `d_sep` by an importance field for tone.
 - **Curl noise** — divergence-free flow; particles never clump into sinks. Compute as perpendicular gradient of a noise field: `v = (∂n/∂y, -∂n/∂x)`.
 - **Domain warping** — feed noise into noise: `n(p + a·n(p + b·n(p)))`. Two levels deep gives marble/agate structure. (Inigo Quilez's articles are canonical.)
 - **Vector fields from math** — build fields from complex functions (`z²+c`), dipoles, or superposed rotors instead of noise; gives structure noise can't.
@@ -23,12 +24,14 @@ Each entry: what it is → one implementation hint.
 - **Wang tiles** — edge-matched tile sets; aperiodic texture with local continuity.
 - **Wallpaper groups** — take any motif, replicate under one of the 17 symmetry groups (p6m, p4g...); instant ornament. Implement as fundamental-domain transform stack.
 - **Girih / Islamic star patterns** — polygons-in-contact method: lay a tiling, draw strands at fixed angles through edge midpoints.
+- **Wave function collapse** — tile adjacency constraints solved by lowest-entropy-first collapse; coherent 'designed-looking' layouts (circuits, architecture, textiles) from a tiny tile set.
 - **Penrose / aperiodic** — rhombus substitution rules; five-fold structure that never repeats.
 - **Hyperbolic tilings {p,q}** — Poincaré disk; reflect a fundamental triangle across geodesic circles. Escher-like infinite boundary detail.
 
 ## Recursion & subdivision
 - **L-systems** — grammar rewriting + turtle; go beyond plants: use them for frieze patterns, space-filling curves, city grammars.
 - **Recursive subdivision** — split rectangles/triangles with biased ratios (golden, √2); stop probabilistically; style per depth. Mondrian → microchip → textile depending on styling.
+- **Fractal flames** — IFS with non-linear variations (sinusoidal, spherical, swirl, julia…), a colour coordinate carried per point, and log-density tone mapping. The reference for how to render any point-cloud system well.
 - **Chaos game / IFS** — iterate random affine maps; Barnsley fern generalizes to any attractor from 3–6 maps. Millions of points, additive alpha.
 - **Fractal fracture** — recursively displace polygon edges (midpoint displacement) for coastlines, lightning, torn paper.
 
@@ -53,6 +56,7 @@ Each entry: what it is → one implementation hint.
 - **Superformula / supershapes** — one polar equation, enormous form range; sweep parameters along a path for shells and blooms.
 
 ## Signal & interference
+- **Isolines of anything** — marching squares over any scalar field (noise, distance, interference, reaction–diffusion concentration) at N thresholds; topographic line art that is instantly plotter-ready.
 - **Moiré** — overlay two near-identical line/dot systems slightly rotated or scaled; interference does the composition.
 - **Wave interference** — sum circular waves from N sources; draw isolines (marching squares) or phase-color.
 - **Metaballs / implicit fields** — sum of falloff functions, threshold with marching squares for blobby contours; stack multiple thresholds for topo-map looks.
@@ -65,3 +69,21 @@ Each entry: what it is → one implementation hint.
 ## Combination heuristic
 
 Pick one *structure* (tiling, subdivision, graph, symmetry group) + one *behavior* (growth, flow, interference, dithering) + one *rendering treatment* (halftone, additive glow, isolines, single-path line art). Examples: physarum **on** a Penrose tiling rendered as engrave-halftone; Chladni nodal lines **fed into** weighted stippling **connected as** one TSP path; reaction–diffusion **masked by** a wallpaper group.
+
+## Upgrading the tropes
+
+When the user explicitly asks for a trope, do the version that doesn't look like everyone else's:
+
+- **Flow field** → curl or domain-warped field (not raw Perlin angle), evenly-spaced streamlines instead of random particles, line weight and spacing modulated by an importance field, and a field with *structure* (singularities, dipoles, a boundary it respects).
+- **Particle trails** → accumulate into a float buffer and tone-map; colour by a per-particle property (age, speed, curvature); seed particles from a designed distribution, not uniform random.
+- **Circle packing** → radii driven by a field; packed inside a meaningful shape; circles *used* as scaffolding (nested rings, hatch fills, stipple density) rather than drawn as outlines.
+- **Recursive tree** → space colonization, or L-system with tropism and seeded variation per branch; attention to trunk taper and branch-angle distribution.
+- **Voronoi** → weighted/relaxed, cells inset and rounded, edges as tapered strokes, or the diagram hidden and used only to drive something else.
+
+## Seed robustness patterns
+
+Systems with unstable regions of parameter space (attractors, reaction–diffusion, growth sims) produce blank or degenerate seeds unless you guard them:
+
+- **Rejection sampling from the seeded rng** — draw candidate parameters, probe cheaply, retry. Deterministic, because retries consume the same rng stream.
+- **Probes**: bounding box / percentile spread; grid occupancy (too low = collapsed or periodic, too high = structureless dust); Lyapunov exponent for iterated maps (λ > 0 = chaotic); energy / variance for sims after N warm-up steps.
+- **Keep seed-level decisions independent of `t`** in animated pieces, or the loop pops when the chosen candidate changes mid-loop.
