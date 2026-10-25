@@ -26,6 +26,7 @@ In the conversation (not a file): the structure/subject, the mood and value/pale
 | Loop, reel, video | template → `scripts/capture_frames.mjs` → ffmpeg | `references/animation.md` |
 | Audio-reactive | offline features → per-frame params (live Web Audio only if interactive) | `references/animation.md` |
 | Volumetrics, refraction, DOF, print-res 3D | Blender (MCP if connected, else headless CLI) | `references/blender.md` |
+| Python raster at print size, 1M+ particles, simulations | GPU Python: CuPy / NVIDIA Warp / PyTorch, CPU fallback | `references/gpu.md` |
 
 Canvas sizes: `width`/`height` in the ART object — square 1080 for feeds, 1080×1920 for reels (native, don't pad), print aspect ratios per `export.md`.
 
@@ -71,13 +72,14 @@ Then: name the single worst failure, state the one change that addresses it, mak
 - **Accumulate, then tone-map.** For anything built from many overlapping marks (attractors, IFS, particle density), plot into a float buffer and tone-map it (log density + gamma), rather than clamping additive alpha on the canvas. The demo piece is the reference implementation.
 - **Clean output.** No text, signatures, or watermarks in the artwork. Titles live in the UI chrome only.
 - **Performant.** Static pieces should render in ≲1.5s at 1× so seed browsing stays interactive — otherwise make them `progressive`. Animated pieces must hold frame rate in preview. Cap element counts; use spatial hashing over naive O(n²).
+- **GPU first for heavy work.** Per-pixel or per-particle work at scale belongs on the GPU when the machine has one: shaders in the browser, CuPy / Warp / PyTorch for offline Python (`references/gpu.md`). The CPU path is the fallback, not the default.
 
 ## Escalation notes
 
 - **Vector/fabrication**: define `paths()` instead of (or alongside) `render()`; the engine previews the paths and exports an SVG in real millimetres (`ART.mm`) with cut/engrave layers and greedy path ordering. Plotter/laser rules in `references/export.md`.
 - **Video**: `node scripts/capture_frames.mjs piece.html frames/ --frames 480 --seed 42` then the ffmpeg recipes in `references/animation.md`. Loops are functions of phase `t`, never time.
 - **Blender**: only when 2D/WebGL genuinely can't produce the look (true volumetrics, caustics, physically-based DOF). `references/blender.md`.
-- **Missing tools**: Playwright, ffmpeg, librosa, and Blender are optional. If one is missing, say so and deliver the best result the available rungs support — the 2D template needs nothing but a browser.
+- **Missing tools**: Playwright, ffmpeg, librosa, Blender, and a CUDA GPU are optional. If one is missing, say so and deliver the best result the available rungs support — the 2D template needs nothing but a browser.
 
 ## Files
 
@@ -91,3 +93,4 @@ Then: name the single worst failure, state the one change that addresses it, mak
 - `references/animation.md` — loops, capture, ffmpeg recipes, audio-reactive.
 - `references/webgl.md` — three.js and shader guidance.
 - `references/blender.md` — Blender escalation.
+- `references/gpu.md` — GPU Python (CuPy, Warp, PyTorch): when it pays, backend switch, port pitfalls, verification.
